@@ -13,8 +13,10 @@ class IDDisplay extends StatelessWidget {
             .map((idItem) => Container(
                   margin: const EdgeInsets.only(right: 8),
                   child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 10,
+                      horizontal: 14,
+                    ),
                     child: Text(
                       idItem,
                       style: const TextStyle(

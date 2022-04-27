@@ -1,6 +1,6 @@
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
-const kWebsocketsApiUrl = "http://10.0.2.2:5000";
+const kWebsocketsApiUrl = "http://127.0.0.1:5000";
 
 class SocketConnection {
   static final SocketConnection _instance = SocketConnection._();
@@ -10,11 +10,13 @@ class SocketConnection {
     return _instance;
   }
 
-  IO.Socket? _socket;
-  Future<IO.Socket> get socket async => _socket ??= await initialize();
-
-  Future<IO.Socket> initialize() async {
-    return IO.io(kWebsocketsApiUrl,
-        IO.OptionBuilder().setTransports(['websocket']).build());
-  }
+  final IO.Socket _socket = IO.io(
+    kWebsocketsApiUrl,
+    IO.OptionBuilder()
+        .setTransports(['websocket'])
+        .setReconnectionDelay(500)
+        .setReconnectionAttempts(10000)
+        .build(),
+  );
+  IO.Socket get socket => _socket;
 }
