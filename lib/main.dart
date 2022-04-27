@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:videofi/screens/dashboard.dart';
 import 'package:videofi/screens/home.dart';
 
@@ -11,10 +12,14 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Color(0xff000000),
+    ));
     return MaterialApp(
       title: 'Flutter Demo',
       theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: Color(0xff300a24),
+        scaffoldBackgroundColor: const Color(0xff300a24),
       ),
       initialRoute: '/',
       routes: {
