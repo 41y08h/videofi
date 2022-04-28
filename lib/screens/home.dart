@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:socket_io_client/socket_io_client.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:videofi/components/connecting_overlay.dart';
 import 'package:videofi/id_display.dart';
+import 'package:videofi/pc.dart';
+import 'package:videofi/screens/call.dart';
 import 'package:videofi/ws.dart';
 
 class Home extends StatefulWidget {
@@ -15,16 +17,32 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   final TextEditingController remoteIdController = TextEditingController();
-  int? localId;
   bool isWSConnected = false;
+
+  int? localId;
+  MediaStream? localStream;
+  RTCVideoRenderer localRenderer = RTCVideoRenderer();
+  RTCVideoRenderer remoteRenderer = RTCVideoRenderer();
+
   @override
   void initState() {
     super.initState();
     initialize();
   }
 
+  @override
+  void dispose() {
+    super.dispose();
+    localStream?.dispose();
+    localRenderer.dispose();
+    remoteRenderer.dispose();
+    SocketConnection().socket.dispose();
+    PeerConnection().pc.then((pc) => pc.dispose());
+  }
+
   void wsOnConnect(dynamic _) {
-    SocketConnection().socket.emit("join");
+    final socket = SocketConnection().socket;
+    socket.emit("join");
   }
 
   void wsOnJoined(dynamic id) {
@@ -40,12 +58,140 @@ class _HomeState extends State<Home> {
     });
   }
 
-  void initialize() {
+  void wsOnCallReceived(dynamic data) async {
+    print("call received");
+    remoteIdController.text = data['callerId'].toString();
+    localStream = await getUserStream();
+
+    final pc = await PeerConnection().pc;
+    registerPCEvents(pc);
+
+    final signal = data['signal'];
+    final description = RTCSessionDescription(signal['sdp'], signal['type']);
+    await pc.setRemoteDescription(description);
+
+    final answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    print('answered call');
+    final socket = SocketConnection().socket;
+    socket.emit("answerCall", {
+      'callerId': data['callerId'],
+      'signal': {
+        'sdp': answer.sdp,
+        'type': answer.type,
+      },
+    });
+  }
+
+  void initialize() async {
     final socket = SocketConnection().socket;
 
     socket.on("connect", wsOnConnect);
     socket.on("join/callback", wsOnJoined);
     socket.on("disconnect", wsOnDisconnect);
+
+    // Signaling events
+    socket.on("peerIsCalling", wsOnCallReceived);
+    socket.on("ice-candidate", (candidate) async {
+      if (candidate['candidate'] == null) return;
+      final iceCandidate = RTCIceCandidate(
+        candidate['candidate'],
+        candidate['sdpMid'],
+        candidate['sdpMLineIndex'],
+      );
+      final pc = await PeerConnection().pc;
+      await pc.addCandidate(iceCandidate);
+    });
+    socket.on("callAnswered", (signal) async {
+      print("call answered");
+      final pc = await PeerConnection().pc;
+
+      final description = RTCSessionDescription(signal['sdp'], signal['type']);
+      await pc.setRemoteDescription(description);
+    });
+  }
+
+  Future<MediaStream> getUserStream() {
+    final Map<String, dynamic> mediaConstraints = {
+      'audio': true,
+      'video': true,
+    };
+
+    return navigator.mediaDevices.getUserMedia(mediaConstraints);
+  }
+
+  void registerPCEvents(RTCPeerConnection pc) {
+    // Unified-Plan
+
+    // When the remote user adds the stream
+    pc.onTrack = (event) {
+      if (event.track.kind == 'video') {
+        remoteRenderer.srcObject = event.streams[0];
+      }
+    };
+
+    // Let's add our stream
+    localStream?.getTracks().forEach((track) {
+      pc.addTrack(track, localStream as MediaStream);
+    });
+
+    pc.onIceCandidate = (candidate) async {
+      final socket = SocketConnection().socket;
+
+      socket.emit(
+        "ice-candidate",
+        {
+          "peerId": remoteIdController.text,
+          "candidate": {
+            "sdpMLineIndex": candidate.sdpMLineIndex,
+            "sdpMid": candidate.sdpMid,
+            "candidate": candidate.candidate,
+          },
+        },
+      );
+    };
+
+    pc.onConnectionState = (state) {
+      // if failed restart ice
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        pc.restartIce();
+      }
+    };
+
+    pc.onIceConnectionState = (state) {
+      if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+        pc.restartIce();
+      }
+    };
+  }
+
+  void onCallPressed() async {
+    final remoteId = remoteIdController.text;
+    if (remoteId.length < 6) return;
+
+    // Navigator.pushNamed(context, Call.routeName, arguments: {
+    //   'type': 'outgoing',
+    //   'data': {
+    //     'remoteId': remoteId,
+    //   }
+    // });
+    localStream = await getUserStream();
+
+    final pc = await PeerConnection().pc;
+    registerPCEvents(pc);
+
+    final offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    final socket = SocketConnection().socket;
+    socket.emit("callPeer", {
+      "peerId": remoteId,
+      "signal": {
+        "type": offer.type,
+        "sdp": offer.sdp,
+      }
+    });
   }
 
   @override
@@ -91,9 +237,8 @@ class _HomeState extends State<Home> {
                       shadowColor: Colors.white,
                       child: TextField(
                         controller: remoteIdController,
-                        maxLength: 6,
                         showCursor: true,
-                        readOnly: true,
+                        // readOnly: true,
                         autofocus: true,
                         inputFormatters: <TextInputFormatter>[
                           FilteringTextInputFormatter.digitsOnly,
@@ -127,7 +272,17 @@ class _HomeState extends State<Home> {
               ),
             ),
             const Spacer(),
-            Numpad(controller: remoteIdController),
+            TextButton(
+              onPressed: () async {
+                final pc = await PeerConnection().pc;
+                print(pc.connectionState);
+              },
+              child: const Text('OK'),
+            ),
+            Numpad(
+              controller: remoteIdController,
+              onSubmit: onCallPressed,
+            ),
           ],
         ),
       ),
@@ -217,16 +372,12 @@ class KeypadButton extends StatelessWidget {
     return TextButton(
       onPressed: onPressed,
       style: ButtonStyle(
-        padding: MaterialStateProperty.all(EdgeInsets.zero),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          color: color ?? const Color(0xff4e4c50),
-          borderRadius: BorderRadius.circular(5),
+        overlayColor: MaterialStateProperty.all(Colors.grey),
+        backgroundColor: MaterialStateProperty.all(
+          color ?? const Color(0xff4e4c50),
         ),
-        alignment: Alignment.center,
-        child: child,
       ),
+      child: child,
     );
   }
 }
