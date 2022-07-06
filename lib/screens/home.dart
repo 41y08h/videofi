@@ -23,6 +23,7 @@ class _HomeState extends State<Home> {
   MediaStream? localStream;
   RTCVideoRenderer localRenderer = RTCVideoRenderer();
   RTCVideoRenderer remoteRenderer = RTCVideoRenderer();
+  dynamic callData;
 
   @override
   void initState() {
@@ -66,6 +67,15 @@ class _HomeState extends State<Home> {
     final pc = await PeerConnection().pc;
     registerPCEvents(pc);
 
+    setState(() {
+      callData = data;
+    });
+  }
+
+  void onAnswerPressed() async {
+    final data = callData;
+
+    final pc = await PeerConnection().pc;
     final signal = data['signal'];
     final description = RTCSessionDescription(signal['sdp'], signal['type']);
     await pc.setRemoteDescription(description);
@@ -127,7 +137,10 @@ class _HomeState extends State<Home> {
     // When the remote user adds the stream
     pc.onTrack = (event) {
       if (event.track.kind == 'video') {
-        remoteRenderer.srcObject = event.streams[0];
+        print("track received");
+        setState(() {
+          remoteRenderer.srcObject = event.streams[0];
+        });
       }
     };
 
@@ -272,12 +285,21 @@ class _HomeState extends State<Home> {
               ),
             ),
             const Spacer(),
-            TextButton(
-              onPressed: () async {
-                final pc = await PeerConnection().pc;
-                print(pc.connectionState);
-              },
-              child: const Text('OK'),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: onAnswerPressed,
+                  child: const Text("Answer"),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final pc = await PeerConnection().pc;
+                    print(pc.connectionState);
+                    print(remoteRenderer.srcObject != null);
+                  },
+                  child: const Text("OK"),
+                ),
+              ],
             ),
             Numpad(
               controller: remoteIdController,
